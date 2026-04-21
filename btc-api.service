@@ -1,0 +1,19 @@
+# systemd service for FastAPI server
+# sudo cp btc-api.service /etc/systemd/system/
+# sudo systemctl daemon-reload && sudo systemctl enable --now btc-api
+
+[Unit]
+Description=Bitcoin Quantum Scanner API
+After=network.target
+
+[Service]
+Type=simple
+User=test
+WorkingDirectory=/home/test/btc
+EnvironmentFile=/home/test/btc/.env
+ExecStart=/home/test/btc/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+# Bitcoin Core configuration
+# Copy to your BITCOIN_DATADIR/bitcoin.conf
+
+# Full transaction index (required for timelock scanner phase 2)
+txindex=1
+
+# Use 100 GB of RAM for block index cache — greatly speeds initial sync
+# With 126 GB RAM this leaves ~26 GB for OS + scans
+dbcache=102400
+
+# RPC
+server=1
+rpcuser=bitcoin
+rpcpassword=CHANGE_ME_STRONG_RANDOM_PASSWORD
+rpcbind=127.0.0.1
+rpcallowip=127.0.0.1
+
+# Recommended for performance on NVMe
+blocksdir=/data/bitcoin/blocks
+
+# Not required but useful: faster block notification
+blocknotify=/bin/true
+
+# Limit mempool memory (we don't need a large mempool for scanning)
+maxmempool=300

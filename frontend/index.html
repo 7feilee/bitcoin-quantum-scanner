@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BTC Quantum Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────── -->
+<header class="hdr">
+  <div class="hdr-brand">
+    <span class="hdr-btc">₿</span>
+    <span class="hdr-title">BTC QUANTUM MONITOR</span>
+  </div>
+  <div class="hdr-meta">
+    <span class="pulse-dot" id="live-dot"></span>
+    <span class="hdr-live">LIVE</span>
+    <span class="hdr-sep">·</span>
+    <span class="hdr-info">Block <span id="hdr-block">—</span></span>
+    <span class="hdr-sep">·</span>
+    <span class="hdr-info">Scan <span id="hdr-scan">—</span></span>
+  </div>
+</header>
+
+<!-- ── Tab bar ────────────────────────────────────────────────── -->
+<nav class="nav">
+  <button class="nav-tab active" data-tab="overview">OVERVIEW</button>
+  <button class="nav-tab" data-tab="check">ADDRESS CHECK</button>
+  <button class="nav-tab" data-tab="distribution">DISTRIBUTION</button>
+  <button class="nav-tab" data-tab="timelocks">TIMELOCKS</button>
+</nav>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!--  TAB 1 — OVERVIEW                                           -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<div id="tab-overview" class="tab-panel active">
+
+  <!-- Row 1: 5 stat tiles ──────────────────────────────────── -->
+  <div class="stat-row">
+    <div class="stat-tile">
+      <div class="st-label">CIRCULATING BTC</div>
+      <div class="st-val" id="v-total-btc">—</div>
+      <div class="st-sub" id="s-total-btc"></div>
+    </div>
+    <div class="stat-tile st-green">
+      <div class="st-label">QUANTUM SAFE</div>
+      <div class="st-val" id="v-safe-btc">—</div>
+      <div class="st-sub" id="s-safe-pct"></div>
+    </div>
+    <div class="stat-tile st-red">
+      <div class="st-label">AT RISK</div>
+      <div class="st-val" id="v-risk-btc">—</div>
+      <div class="st-sub" id="s-risk-pct"></div>
+    </div>
+    <div class="stat-tile st-yellow">
+      <div class="st-label">RISK %</div>
+      <div class="st-val" id="v-risk-pct">—</div>
+      <div class="st-sub">of total supply</div>
+    </div>
+    <div class="stat-tile">
+      <div class="st-label">TOTAL UTXOs</div>
+      <div class="st-val" id="v-total-utxos">—</div>
+      <div class="st-sub" id="s-total-utxos"></div>
+    </div>
+  </div>
+
+  <!-- Row 2: Safety bar ────────────────────────────────────── -->
+  <div class="safety-row panel">
+    <div class="safety-hdr">
+      <span class="panel-label">── QUANTUM SAFETY ──────────────────────────────────</span>
+      <span class="safety-pct-label" id="safety-pct-label">—</span>
+    </div>
+    <div class="safety-track">
+      <div class="safety-fill" id="safety-fill" style="width:0%"></div>
+      <div class="safety-fill-danger" id="safety-fill-d" style="left:0%;width:0%"></div>
+    </div>
+    <div class="safety-legend">
+      <span class="leg-safe">▌ SAFE</span>
+      <span class="leg-risk">▌ P2PK</span>
+      <span class="leg-risk2">▌ P2TR</span>
+      <span class="leg-risk3">▌ P2MS</span>
+    </div>
+  </div>
+
+  <!-- Row 3: Vulnerable + Clock ────────────────────────────── -->
+  <div class="two-col">
+
+    <div class="panel">
+      <div class="panel-label">── VULNERABLE ASSETS ───────────────────────────────</div>
+      <div id="vuln-list" class="vuln-list"></div>
+      <div class="vuln-total" id="vuln-total"></div>
+    </div>
+
+    <div class="panel clock-panel">
+      <div class="panel-label">── QUANTUM COUNTDOWN ───────────────────────────────</div>
+      <div class="clock-inner">
+        <canvas id="clock-canvas" width="170" height="170"></canvas>
+        <div class="clock-detail" id="clock-detail"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Row 4: Sparkline + Satoshi ───────────────────────────── -->
+  <div class="two-col">
+
+    <div class="panel">
+      <div class="panel-label">── 30-DAY MIGRATION TREND ──────────────────────────</div>
+      <canvas id="spark-canvas" width="420" height="100"></canvas>
+      <div class="spark-meta" id="spark-meta"></div>
+    </div>
+
+    <div class="panel panel-alert">
+      <div class="panel-label">── SATOSHI COINS ───────────────────────────────────</div>
+      <div id="satoshi-content"></div>
+    </div>
+
+  </div>
+
+</div><!-- /tab-overview -->
+
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!--  TAB 2 — ADDRESS CHECK                                      -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<div id="tab-check" class="tab-panel hidden">
+
+  <div class="check-wrap">
+    <div class="check-title">ADDRESS QUANTUM RISK CHECK</div>
+    <div class="check-sub">Enter any Bitcoin address to assess its quantum vulnerability</div>
+
+    <div class="search-row">
+      <input id="addr-input" class="addr-input" type="text"
+             placeholder="1A1zP1…   bc1q…   bc1p…"
+             autocomplete="off" spellcheck="false">
+      <button class="scan-btn" id="scan-btn" onclick="checkAddress()">SCAN</button>
+    </div>
+
+    <div id="addr-result" class="addr-result hidden"></div>
+
+    <!-- Risk tier cards -->
+    <div class="tier-grid" id="tier-grid">
+      <div class="tier-card tier-critical">
+        <div class="tier-badge">CRITICAL</div>
+        <div class="tier-types">P2PK · P2TR</div>
+        <div class="tier-desc">Public key directly embedded in scriptPubKey. Shor's algorithm derives private key directly.</div>
+      </div>
+      <div class="tier-card tier-high">
+        <div class="tier-badge">HIGH</div>
+        <div class="tier-types">P2MS · Reused P2PKH</div>
+        <div class="tier-desc">Public keys exposed on-chain via multisig script or prior spending transaction.</div>
+      </div>
+      <div class="tier-card tier-medium">
+        <div class="tier-badge">MEDIUM</div>
+        <div class="tier-types">P2SH · P2WSH</div>
+        <div class="tier-desc">Redeem/witness script hidden until spend. Risk depends on script contents.</div>
+      </div>
+      <div class="tier-card tier-low">
+        <div class="tier-badge">LOW</div>
+        <div class="tier-types">P2PKH · P2WPKH</div>
+        <div class="tier-desc">Only RIPEMD-160(SHA-256(pubkey)) hash on-chain. Safe while address is unspent and unreused.</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /tab-check -->
+
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!--  TAB 3 — DISTRIBUTION                                       -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<div id="tab-distribution" class="tab-panel hidden">
+
+  <div class="panel-label top-label">── ADDRESS TYPE DISTRIBUTION ───────────────────────────────────</div>
+
+  <div class="stat-row" id="dist-stat-row">
+    <div class="stat-tile"><div class="st-label">TOTAL UTXOs</div><div class="st-val" id="dv-total-utxos">—</div></div>
+    <div class="stat-tile st-green"><div class="st-label">SAFE SUPPLY</div><div class="st-val" id="dv-safe-pct">—</div></div>
+    <div class="stat-tile st-red"><div class="st-label">AT-RISK SUPPLY</div><div class="st-val" id="dv-risk-pct">—</div></div>
+    <div class="stat-tile"><div class="st-label">SCAN BLOCK</div><div class="st-val" id="dv-block">—</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-label">── SUPPLY COMPOSITION ─────────────────────────────────────────────</div>
+    <canvas id="dist-bar-canvas" width="900" height="44"></canvas>
+    <div class="dist-bar-legend" id="dist-bar-legend"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-label">── DETAILED BREAKDOWN ─────────────────────────────────────────────</div>
+    <table class="data-table" id="dist-table">
+      <thead>
+        <tr>
+          <th>TYPE</th>
+          <th>DESCRIPTION</th>
+          <th class="num">UTXOs</th>
+          <th class="num">BTC</th>
+          <th class="num">% SUPPLY</th>
+          <th class="num">% UTXOs</th>
+          <th>QUANTUM STATUS</th>
+          <th>SHARE</th>
+        </tr>
+      </thead>
+      <tbody id="dist-tbody"></tbody>
+    </table>
+  </div>
+
+</div><!-- /tab-distribution -->
+
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!--  TAB 4 — TIMELOCKS                                          -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<div id="tab-timelocks" class="tab-panel hidden">
+
+  <div class="panel-label top-label">── TIMELOCK UTXO ANALYSIS ──────────────────────────────────────</div>
+
+  <div class="stat-row" id="tl-stat-row">
+    <div class="stat-tile"><div class="st-label">TOTAL FOUND</div><div class="st-val" id="tv-total">—</div></div>
+    <div class="stat-tile"><div class="st-label">CLTV (ABSOLUTE)</div><div class="st-val" id="tv-cltv">—</div></div>
+    <div class="stat-tile"><div class="st-label">CSV (RELATIVE)</div><div class="st-val" id="tv-csv">—</div></div>
+    <div class="stat-tile st-yellow"><div class="st-label">INHERITANCE</div><div class="st-val" id="tv-inherit">—</div></div>
+  </div>
+
+  <div class="two-col">
+    <div class="panel">
+      <div class="panel-label">── BREAKDOWN BY LOCK TYPE ──────────────────────────</div>
+      <canvas id="tl-bar-canvas" width="420" height="200"></canvas>
+    </div>
+    <div class="panel panel-inherit">
+      <div class="panel-label">── DUAL-KEY INHERITANCE PATTERN ────────────────────</div>
+      <div class="inherit-body">
+        <div class="code-block">
+OP_IF
+  &lt;primary_key&gt; OP_CHECKSIG
+OP_ELSE
+  &lt;locktime&gt; OP_CLTV OP_DROP
+  &lt;backup_key&gt; OP_CHECKSIG
+OP_ENDIF
+        </div>
+        <p>Primary key signs normally. After locktime expires, a backup key can spend — enabling on-chain inheritance without a third party.</p>
+        <div class="inherit-count"><span id="iv-count">—</span> patterns detected on mainnet</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="tl-status-bar">
+    <div class="panel-label">── SCAN STATUS ─────────────────────────────────────</div>
+    <div id="tl-status-content" class="tl-status"></div>
+  </div>
+
+</div><!-- /tab-timelocks -->
+
+
+<!-- ── Footer ─────────────────────────────────────────────────── -->
+<footer class="footer">
+  <span>BTC Quantum Monitor · data updated nightly · <a href="https://github.com" target="_blank">open source</a></span>
+  <span id="footer-queries"></span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

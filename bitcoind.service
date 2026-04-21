@@ -1,0 +1,25 @@
+# systemd service for Bitcoin Core
+# sudo cp bitcoind.service /etc/systemd/system/
+# sudo systemctl daemon-reload && sudo systemctl enable --now bitcoind
+
+[Unit]
+Description=Bitcoin Core Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=bitcoin
+Group=bitcoin
+ExecStart=/usr/local/bin/bitcoind -datadir=/data/bitcoin -daemon
+ExecStop=/usr/local/bin/bitcoin-cli -datadir=/data/bitcoin stop
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=infinity
+TimeoutStopSec=600
+
+# Give it access to large memory (100 GB dbcache)
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
