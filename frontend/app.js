@@ -2,7 +2,7 @@
 
 // ─── Config ────────────────────────────────────────────────────────────────
 // Set API_BASE_URL in window before this script, or deploy with env var.
-const API = (window.API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+const API = (window.API_BASE_URL || '').replace(/\/$/, '');
 
 // ─── Palette (matches CSS vars) ────────────────────────────────────────────
 const C = {
@@ -112,8 +112,10 @@ document.querySelectorAll('.nav-tab').forEach(btn => {
     const t = btn.dataset.tab;
     if (!_tabLoaded[t]) {
       _tabLoaded[t] = true;
+      if (t === 'check')        renderHistory();
       if (t === 'distribution') loadDistribution();
       if (t === 'timelocks')    loadTimelocks();
+      if (t === 'analytics')    loadAnalytics();
     }
   });
 });
@@ -465,6 +467,59 @@ function renderVulnList(breakdown) {
 
 // ─── Tab 2: Address Check ────────────────────────────────────────────────────
 
+const HISTORY_KEY = 'btc_addr_history';
+const HISTORY_MAX = 20;
+
+function saveToHistory(address, data) {
+  let hist = [];
+  try { hist = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch (_) {}
+  hist = hist.filter(h => h.address !== address);
+  hist.unshift({
+    address,
+    risk_level:   data.risk_level   || 'UNKNOWN',
+    address_type: data.address_type || '—',
+    checked_at:   new Date().toISOString(),
+  });
+  if (hist.length > HISTORY_MAX) hist = hist.slice(0, HISTORY_MAX);
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(hist)); } catch (_) {}
+  renderHistory();
+}
+
+function clearHistory() {
+  localStorage.removeItem(HISTORY_KEY);
+  renderHistory();
+}
+
+function loadFromHistory(address) {
+  q('addr-input').value = address;
+  checkAddress();
+}
+
+function renderHistory() {
+  const wrap = q('addr-history');
+  if (!wrap) return;
+  let hist = [];
+  try { hist = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch (_) {}
+  if (!hist.length) { wrap.style.display = 'none'; return; }
+
+  wrap.style.display = '';
+  wrap.innerHTML = `
+    <div class="history-hdr">
+      <span class="panel-label" style="margin-bottom:0">── RECENT CHECKS</span>
+      <button class="history-clear" onclick="clearHistory()">CLEAR</button>
+    </div>
+    <div class="history-list">
+      ${hist.map(h => `
+        <div class="history-row" onclick="loadFromHistory('${h.address}')">
+          <span class="risk-badge rb-${h.risk_level}">${h.risk_level}</span>
+          <span class="history-addr">${h.address}</span>
+          <span class="history-type">${h.address_type}</span>
+          <span class="history-time">${h.checked_at.slice(0, 16).replace('T', ' ')}</span>
+        </div>`).join('')}
+    </div>
+  `;
+}
+
 q('addr-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') checkAddress();
 });
@@ -489,6 +544,8 @@ async function checkAddress() {
     tiers.style.display = '';
     return;
   }
+
+  saveToHistory(addr, data);
 
   const rd = data.risk_details || {};
   const ud = data.utxo_data || {};
@@ -711,13 +768,371 @@ async function loadTimelocks() {
                   : data.status === 'running'  ? 'tl-running'
                   : 'tl-none';
   q('tl-status-content').className = 'tl-status ' + statusCls;
+  const ckpt = data.checkpoint_block;
+  const tip  = data.block_height;
+  const phasePct = (ckpt && tip) ? (ckpt / tip * 100).toFixed(1) : null;
   q('tl-status-content').innerHTML = `
     Status: <strong>${data.status}</strong> ·
     Records: <strong>${fmtNum(data.records_found)}</strong> ·
-    Block: <strong>${fmtNum(data.block_height)}</strong> ·
+    Tip block: <strong>${fmtNum(tip)}</strong> ·
     Started: ${data.started_at ? data.started_at.slice(0,16) : '—'}
-    ${data.status === 'running' ? '<br>Phase 2 block scan in progress — expected 3-5 days.' : ''}
+    ${data.status === 'running' && ckpt ? `<br>Phase 2 scanning block <strong>${fmtNum(ckpt)}</strong> / ${fmtNum(tip)} (${phasePct}%)` : ''}
+    ${data.status === 'running' && !ckpt ? '<br>Phase 1 (UTXO snapshot) in progress…' : ''}
   `;
+}
+
+// ─── Tab 5: Analytics ────────────────────────────────────────────────────────
+
+const EPOCH_LABELS = {
+  genesis:     'Pre-2012 (Epoch 1)',
+  halving1:    '2012–2016 (Epoch 2)',
+  halving2:    '2016–2020 (Epoch 3)',
+  halving3:    '2020–2024 (Epoch 4)',
+  halving4_plus: '2024+ (Epoch 5)',
+};
+
+const SATOSHI_COLORS = {
+  genesis:     C.red,
+  early:       '#cc3300',
+  satoshi_era: C.orange,
+  post_satoshi:'#cc6600',
+};
+
+async function loadAnalytics() {
+  const [dormancy, concentration, walletTiers, satoshiEra, p2trGrowth, p2sh, entities, lightning,
+         awSummary, awTiers, awTop100] =
+    await Promise.allSettled([
+      apiFetch('/api/v1/analytics/dormancy'),
+      apiFetch('/api/v1/analytics/concentration'),
+      apiFetch('/api/v1/analytics/wallet_tiers'),
+      apiFetch('/api/v1/analytics/satoshi_era'),
+      apiFetch('/api/v1/analytics/p2tr_growth'),
+      apiFetch('/api/v1/analytics/p2sh_multisig'),
+      apiFetch('/api/v1/analytics/entities'),
+      apiFetch('/api/v1/analytics/lightning'),
+      apiFetch('/api/v1/analytics/all_wallet_summary'),
+      apiFetch('/api/v1/analytics/all_wallet_tiers'),
+      apiFetch('/api/v1/analytics/all_wallet_top100'),
+    ]);
+
+  if (dormancy.status === 'fulfilled')      renderDormancy(dormancy.value);
+  if (satoshiEra.status === 'fulfilled')    renderSatoshiEra(satoshiEra.value);
+  if (entities.status === 'fulfilled')      renderEntities(entities.value);
+  if (p2trGrowth.status === 'fulfilled')    renderP2TRGrowth(p2trGrowth.value);
+  if (walletTiers.status === 'fulfilled')   renderWalletTiers(walletTiers.value);
+  if (concentration.status === 'fulfilled') renderConcentration(concentration.value);
+  if (lightning.status === 'fulfilled')     renderLightning(lightning.value);
+  if (p2sh.status === 'fulfilled')          renderP2SH(p2sh.value);
+  if (awSummary.status === 'fulfilled')     renderAWsummary(awSummary.value);
+  if (awTiers.status === 'fulfilled')       renderAWtiers(awTiers.value);
+  if (awTop100.status === 'fulfilled')      renderAWtop100(awTop100.value);
+}
+
+function renderDormancy(data) {
+  const row = q('an-dormancy-row');
+  if (!row || !data?.epochs?.length) return;
+  const epochs = data.epochs;
+  const maxVal = Math.max(...epochs.map(e => e.value_sat), 1);
+  row.innerHTML = epochs.map(e => {
+    const pct = e.value_sat / maxVal * 100;
+    return `
+      <div class="stat-tile" style="min-width:160px;flex:1">
+        <div class="st-label">${EPOCH_LABELS[e.epoch] || e.epoch}</div>
+        <div class="st-val" style="font-size:18px">${fmtBTC(e.value_sat)} BTC</div>
+        <div class="st-sub">${fmtNum(e.utxo_count)} UTXOs</div>
+        <div style="margin-top:6px;height:3px;background:var(--muted2);border-radius:2px">
+          <div style="height:3px;width:${pct.toFixed(1)}%;background:var(--orange);border-radius:2px;transition:width 1.2s ease"></div>
+        </div>
+        <div class="st-sub" style="margin-top:2px">${e.block_range}</div>
+      </div>`;
+  }).join('');
+}
+
+function renderSatoshiEra(data) {
+  const canvas = q('an-satoshi-canvas');
+  const meta   = q('an-satoshi-meta');
+  if (!canvas || !data?.eras?.length) return;
+
+  const items = data.eras.map(e => ({
+    label: e.era.replace('_', ' '),
+    count: e.utxo_count,
+    color: SATOSHI_COLORS[e.era] || C.orange,
+  }));
+  drawTLBars(canvas, items);
+
+  const total = data.eras.reduce((s, e) => s + e.value_sat, 0);
+  meta.innerHTML = `<span style="color:var(--muted);font-size:10px">
+    Total early P2PK exposure: <strong style="color:var(--text)">${fmtBTC(total)} BTC</strong>
+    &nbsp;·&nbsp; ${data.note}
+  </span>`;
+}
+
+function renderEntities(data) {
+  const el = q('an-entities');
+  if (!el) return;
+  const list = data?.entities || [];
+  if (!list.length) {
+    el.innerHTML = `<div style="color:var(--muted);font-size:11px;padding:12px">
+      No entity matches found. Run <code>scan_analytics.py</code> and populate
+      <code>data/known_entities.json</code>.
+    </div>`;
+    return;
+  }
+  el.innerHTML = list.map(e => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div>
+        <div style="font-size:11px;font-weight:600;color:var(--text)">${e.entity}</div>
+        <div style="font-size:9px;color:var(--muted);margin-top:2px">${e.utxo_count} UTXO(s)</div>
+      </div>
+      <div style="font-size:13px;font-weight:700;color:var(--orange)">${fmtBTC(e.value_sat)} BTC</div>
+    </div>`).join('');
+}
+
+function renderP2TRGrowth(data) {
+  const canvas = q('an-p2tr-canvas');
+  const meta   = q('an-p2tr-meta');
+  if (!canvas || !data?.series) return;
+
+  const series = data.series;
+  if (series.length < 2) {
+    if (meta) meta.textContent = 'Insufficient data — trend builds with daily scans';
+    return;
+  }
+
+  // Reuse drawSparkline but map p2tr_value_sat as the value field
+  const mapped = series.map(s => ({ date: s.date, vuln_value_sat: s.p2tr_value_sat }));
+  drawSparkline(canvas, mapped);
+
+  const first = series[0], last = series[series.length - 1];
+  const delta = last.p2tr_value_sat - first.p2tr_value_sat;
+  const dir   = delta >= 0 ? 'spark-up' : 'spark-down';
+  const arrow = delta >= 0 ? '▲' : '▼';
+  if (meta) meta.innerHTML = `
+    <span class="${dir}">${arrow} ${(delta / 1e8).toFixed(2)} BTC</span>
+    <span>P2TR exposure change (${first.date} → ${last.date})</span>
+    <span style="color:var(--muted)">${fmtNum(last.p2tr_utxos)} Taproot UTXOs today</span>
+  `;
+}
+
+function renderWalletTiers(data) {
+  const el = q('an-wallet-tiers');
+  if (!el || !data?.tiers?.length) return;
+
+  const ORDER = ['whale_10k_plus','whale_5k_10k','whale_1k_5k','large_100_1k','medium_10_100','small_under10'];
+  const COLORS = { whale_10k_plus: C.red, whale_5k_10k: '#dd2200', whale_1k_5k: C.orange,
+                   large_100_1k: C.yellow, medium_10_100: C.blue, small_under10: C.muted };
+  const tiers = ORDER.map(k => data.tiers.find(t => t.tier === k)).filter(Boolean);
+  const totalBTC = tiers.reduce((s, t) => s + t.value_btc, 0);
+  const maxWallets = Math.max(...tiers.map(t => t.wallet_count), 1);
+
+  el.innerHTML = `
+    <div style="margin-bottom:8px;color:var(--muted);font-size:10px">${data.note}</div>
+    <table class="data-table" style="width:100%">
+      <thead><tr>
+        <th>TIER</th><th>RANGE</th>
+        <th class="num">WALLETS</th><th class="num">TOTAL BTC</th>
+        <th class="num">% OF AT-RISK BTC</th><th style="width:160px">WALLET SHARE</th>
+      </tr></thead>
+      <tbody>
+        ${tiers.map(t => {
+          const pctBTC     = totalBTC ? (t.value_btc / totalBTC * 100).toFixed(1) : '0';
+          const pctWallets = (t.wallet_count / maxWallets * 100).toFixed(1);
+          const col        = COLORS[t.tier] || C.muted;
+          return `<tr>
+            <td style="color:${col};font-weight:600;font-size:11px">${t.category}</td>
+            <td style="color:var(--text)">${t.range}</td>
+            <td class="num">${fmtNum(t.wallet_count)}</td>
+            <td class="num" style="color:${col}">${t.value_btc.toFixed(2)}</td>
+            <td class="num">${pctBTC}%</td>
+            <td>
+              <div style="background:var(--muted2);height:8px;border-radius:4px;overflow:hidden">
+                <div style="background:${col};width:${pctWallets}%;height:100%;border-radius:4px;transition:width 1s ease"></div>
+              </div>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderConcentration(data) {
+  const tbody = q('an-conc-tbody');
+  if (!tbody || !data?.top_100?.length) return;
+  const totalBTC = data.top_100.reduce((s, r) => s + r.value_btc, 0);
+  tbody.innerHTML = data.top_100.map(r => {
+    const addr  = r.address || '—';
+    const short = addr !== '—' ? addr.slice(0, 14) + '…' + addr.slice(-8) : '—';
+    const pct   = totalBTC ? (r.value_btc / totalBTC * 100).toFixed(2) : '0';
+    const barW  = totalBTC ? Math.max(r.value_btc / data.top_100[0].value_btc * 100, 1).toFixed(1) : 0;
+    return `<tr>
+      <td style="color:var(--muted);width:36px">${r.rank}</td>
+      <td style="font-size:10px;letter-spacing:.02em;font-family:monospace" title="${addr}">${short}</td>
+      <td style="color:var(--muted);font-size:10px;width:60px">${r.address ? (r.address.startsWith('bc1p') ? 'P2TR' : r.address.startsWith('bc1q') ? 'P2WPKH' : r.address.startsWith('1') ? 'P2PKH' : '—') : '—'}</td>
+      <td class="num" style="width:50px">${fmtNum(r.utxo_count)}</td>
+      <td class="num" style="color:var(--orange);width:80px">${r.value_btc.toFixed(2)}</td>
+      <td style="width:100px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="background:var(--muted2);height:6px;border-radius:3px;flex:1;overflow:hidden">
+            <div style="background:var(--orange);width:${barW}%;height:100%;border-radius:3px"></div>
+          </div>
+          <span style="font-size:9px;color:var(--muted);min-width:32px;text-align:right">${pct}%</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function renderLightning(data) {
+  const el = q('an-lightning');
+  if (!el || !data) return;
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div class="stat-tile">
+        <div class="st-label">CSV TIMELOCK UTXOs</div>
+        <div class="st-val" style="font-size:20px">${fmtNum(data.csv_utxo_count)}</div>
+        <div class="st-sub">${fmtBTC(data.csv_value_sat)} BTC locked</div>
+      </div>
+      <div class="stat-tile">
+        <div class="st-label">P2WSH UTXO UPPER BOUND</div>
+        <div class="st-val" style="font-size:20px">${fmtNum(data.p2wsh_utxo_upper_bound)}</div>
+        <div class="st-sub">all P2WSH outputs</div>
+      </div>
+    </div>
+    <div style="color:var(--muted);font-size:10px;line-height:1.7">${data.note}</div>
+  `;
+}
+
+function renderP2SH(data) {
+  const el = q('an-p2sh');
+  if (!el || !data) return;
+  const total = (data.exposed_multisig_count || 0) + (data.other_p2sh_count || 0);
+  const pct = total ? (data.exposed_multisig_count / total * 100).toFixed(1) : 0;
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div class="stat-tile st-red">
+        <div class="st-label">EXPOSED MULTISIG</div>
+        <div class="st-val" style="font-size:20px">${fmtNum(data.exposed_multisig_count)}</div>
+        <div class="st-sub">OP_CHECKMULTISIG detected</div>
+      </div>
+      <div class="stat-tile">
+        <div class="st-label">OTHER P2SH/P2WSH</div>
+        <div class="st-val" style="font-size:20px">${fmtNum(data.other_p2sh_count)}</div>
+        <div class="st-sub">script type unknown</div>
+      </div>
+      <div class="stat-tile st-yellow">
+        <div class="st-label">MULTISIG FRACTION</div>
+        <div class="st-val" style="font-size:20px">${pct}%</div>
+        <div class="st-sub">of revealed scripts</div>
+      </div>
+    </div>
+    <div style="color:var(--muted);font-size:10px;line-height:1.7">${data.note}</div>
+  `;
+}
+
+// ─── All-wallet section ──────────────────────────────────────────────────────
+
+const _NO_DATA_HTML = `<div style="color:var(--muted);font-size:11px;padding:16px 0">
+  No data yet — run <code style="color:var(--orange)">python scan_allwallets.py</code>
+  (requires the UTXO snapshot; ~25 min).
+</div>`;
+
+function renderAWsummary(data) {
+  const row = q('aw-summary-row');
+  if (!row) return;
+  if (data?.status === 'no_data') { row.innerHTML = _NO_DATA_HTML; return; }
+  const tiles = [
+    { label: 'UNIQUE ADDRESSES', val: fmtNum(data.total_addresses), sub: 'with ≥ 1 UTXO' },
+    { label: 'MEAN BALANCE',     val: fmtBTC(data.mean_balance_sat) + ' BTC', sub: 'per address' },
+    { label: 'ADDRESSABLE BTC',  val: fmtBTC(data.total_btc_sat) + ' BTC',   sub: 'P2PKH/SH/WPKH/WSH/TR' },
+    { label: 'NO-ADDRESS BTC',   val: fmtBTC(data.no_addr_sat) + ' BTC',     sub: 'P2PK + multisig (quantum-vuln)' },
+  ];
+  row.innerHTML = tiles.map(t => `
+    <div class="stat-tile" style="flex:1;min-width:180px">
+      <div class="st-label">${t.label}</div>
+      <div class="st-val" style="font-size:20px">${t.val}</div>
+      <div class="st-sub">${t.sub}</div>
+    </div>`).join('');
+}
+
+function renderAWtiers(data) {
+  const el = q('aw-tiers');
+  if (!el) return;
+  if (data?.status === 'no_data') { el.innerHTML = _NO_DATA_HTML; return; }
+  const tiers = data.tiers || [];
+  if (!tiers.length)              { el.innerHTML = _NO_DATA_HTML; return; }
+
+  const COLORS = {
+    whale_10k_plus: C.red,    whale_5k_10k: '#dd2200',
+    whale_1k_5k:    C.orange, large_100_1k: C.yellow,
+    medium_10_100:  C.blue,   small_1_10:   '#4477cc',
+    dust_under1:    C.muted,
+  };
+  const maxWallets = Math.max(...tiers.map(t => t.wallet_count), 1);
+  const maxBTC     = Math.max(...tiers.map(t => t.value_btc),    1);
+
+  el.innerHTML = `
+    <table class="data-table" style="width:100%">
+      <thead><tr>
+        <th>TIER</th><th>RANGE</th>
+        <th class="num">WALLETS</th><th class="num">% WALLETS</th>
+        <th class="num">TOTAL BTC</th><th class="num">% SUPPLY</th>
+        <th style="width:200px">BTC CONCENTRATION</th>
+      </tr></thead>
+      <tbody>
+        ${tiers.map(t => {
+          const col     = COLORS[t.tier] || C.muted;
+          const barPct  = (t.value_btc / maxBTC * 100).toFixed(1);
+          return `<tr>
+            <td style="color:${col};font-weight:600;font-size:10px">${t.category}</td>
+            <td>${t.range}</td>
+            <td class="num">${fmtNum(t.wallet_count)}</td>
+            <td class="num" style="color:var(--muted)">${t.wallet_pct.toFixed(3)}%</td>
+            <td class="num" style="color:${col}">${fmtBTC(t.value_sat)}</td>
+            <td class="num">${t.btc_pct.toFixed(2)}%</td>
+            <td>
+              <div style="background:var(--muted2);height:8px;border-radius:4px;overflow:hidden">
+                <div style="background:${col};width:${barPct}%;height:100%;border-radius:4px;transition:width 1s ease"></div>
+              </div>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+function renderAWtop100(data) {
+  const tbody = q('aw-top100-tbody');
+  if (!tbody) return;
+  if (data?.status === 'no_data' || !data?.top_100?.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="padding:16px 0">${_NO_DATA_HTML}</td></tr>`;
+    return;
+  }
+  const totalSupply = 2_100_000_000_000_000; // 21M BTC in sat
+  const TYPE_COLOR  = { P2TR: C.orange, P2PKH: C.green, P2WPKH: '#00a854',
+                        P2SH: C.blue,   P2WSH: '#2266cc', UNKNOWN: C.muted };
+  tbody.innerHTML = data.top_100.map(r => {
+    const addr  = r.address || '—';
+    const short = addr !== '—' ? addr.slice(0, 16) + '…' + addr.slice(-8) : '—';
+    const pct   = (r.value_sat / totalSupply * 100).toFixed(4);
+    const barW  = (r.value_sat / data.top_100[0].value_sat * 100).toFixed(1);
+    const col   = TYPE_COLOR[r.script_type] || C.muted;
+    return `<tr>
+      <td style="color:var(--muted);width:36px">${r.rank}</td>
+      <td style="font-size:10px;font-family:monospace" title="${addr}">${short}</td>
+      <td style="width:64px"><span style="color:${col};font-size:9px;font-weight:700">${r.script_type}</span></td>
+      <td class="num" style="width:50px">${fmtNum(r.utxo_count)}</td>
+      <td class="num" style="color:var(--orange);width:90px">${r.value_btc.toFixed(2)}</td>
+      <td style="width:130px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="background:var(--muted2);height:6px;border-radius:3px;flex:1;overflow:hidden">
+            <div style="background:${col};width:${barW}%;height:100%;border-radius:3px"></div>
+          </div>
+          <span style="font-size:9px;color:var(--muted);min-width:44px;text-align:right">${pct}%</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
 }
 
 // ─── Footer stats ────────────────────────────────────────────────────────────

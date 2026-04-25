@@ -72,6 +72,9 @@ CREATE TABLE IF NOT EXISTS address_queries (
 CREATE INDEX IF NOT EXISTS idx_quantum_address   ON quantum_utxos(address);
 CREATE INDEX IF NOT EXISTS idx_quantum_type      ON quantum_utxos(script_type);
 CREATE INDEX IF NOT EXISTS idx_quantum_risk      ON quantum_utxos(risk_level);
+CREATE INDEX IF NOT EXISTS idx_quantum_run       ON quantum_utxos(scan_run_id);
+CREATE INDEX IF NOT EXISTS idx_quantum_satoshi   ON quantum_utxos(script_type, block_height);
+CREATE INDEX IF NOT EXISTS idx_quantum_overview  ON quantum_utxos(scan_run_id, script_type, value_sat);
 CREATE INDEX IF NOT EXISTS idx_timelock_type     ON timelock_utxos(lock_type);
 CREATE INDEX IF NOT EXISTS idx_timelock_inherit  ON timelock_utxos(is_inheritance_pattern);
 CREATE INDEX IF NOT EXISTS idx_queries_address   ON address_queries(address);
@@ -94,12 +97,42 @@ CREATE TABLE IF NOT EXISTS migration_snapshots (
     p2ms_value      INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_snap_date ON migration_snapshots(scan_date);
+
+CREATE TABLE IF NOT EXISTS quantum_analytics (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    computed_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    scan_run_id INTEGER REFERENCES scan_runs(id),
+    metric      TEXT    NOT NULL,
+    label       TEXT    NOT NULL,
+    utxo_count  INTEGER NOT NULL DEFAULT 0,
+    value_sat   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_analytics_metric ON quantum_analytics(metric);
+
+CREATE TABLE IF NOT EXISTS reused_addresses (
+    address          TEXT NOT NULL PRIMARY KEY,
+    pubkey_hex       TEXT NOT NULL,
+    first_seen_txid  TEXT NOT NULL,
+    first_seen_block INTEGER NOT NULL,
+    scan_run_id      INTEGER REFERENCES scan_runs(id)
+);
+
+CREATE TABLE IF NOT EXISTS wallet_top100 (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    computed_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    rank        INTEGER NOT NULL,
+    address     TEXT    NOT NULL,
+    script_type TEXT    NOT NULL,
+    utxo_count  INTEGER NOT NULL DEFAULT 0,
+    value_sat   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_wallet_top100_rank ON wallet_top100(rank);
 """
 
 
 @contextlib.contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -134,6 +167,16 @@ def finish_scan_run(run_id: int, records: int, error: str = None):
             "records_found=?, error_msg=? WHERE id=?",
             (status, records, error, run_id),
         )
+
+
+def get_latest_analytics(metric: str) -> list:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT label, utxo_count, value_sat FROM quantum_analytics "
+            "WHERE metric=? ORDER BY id DESC LIMIT 500",
+            (metric,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def get_latest_scan(scan_type: str):

@@ -55,7 +55,8 @@ def rpc(method, *params):
     from bitcoinrpc.authproxy import AuthServiceProxy
     url = (f"http://{BITCOIN_RPC_USER}:{BITCOIN_RPC_PASSWORD}"
            f"@{BITCOIN_RPC_HOST}:{BITCOIN_RPC_PORT}")
-    proxy = AuthServiceProxy(url)
+    timeout = 7200 if method == "dumptxoutset" else 60
+    proxy = AuthServiceProxy(url, timeout=timeout)
     return getattr(proxy, method)(*params)
 
 

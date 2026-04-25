@@ -48,17 +48,25 @@ def rpc(method, *params):
     from bitcoinrpc.authproxy import AuthServiceProxy
     url = (f"http://{BITCOIN_RPC_USER}:{BITCOIN_RPC_PASSWORD}"
            f"@{BITCOIN_RPC_HOST}:{BITCOIN_RPC_PORT}")
-    proxy = AuthServiceProxy(url)
+    # dumptxoutset on a full mainnet node can take 20-40 minutes; use 2h timeout.
+    timeout = 7200 if method == "dumptxoutset" else 60
+    proxy = AuthServiceProxy(url, timeout=timeout)
     return getattr(proxy, method)(*params)
 
 
 def create_snapshot(path: str) -> dict:
+    if os.path.exists(path):
+        log.info("Removing stale snapshot at %s", path)
+        os.unlink(path)
     log.info("Creating UTXO snapshot via RPC (this takes several minutes)…")
     result = rpc("dumptxoutset", path)
     log.info("Snapshot created: %s UTXOs at block %d (%s)",
              result.get("coins_written", "?"),
              result.get("base_height", 0),
              result.get("base_hash", "?")[:16] + "…")
+    # bitcoind creates the file as bitcoin:bitcoin 600; make it group-readable
+    # so the test user (member of bitcoin group) can parse it.
+    subprocess.run(["sudo", "/usr/bin/chmod", "640", path], check=True)
     return result
 
 
@@ -171,7 +179,7 @@ def main():
         log.exception("Scan failed")
         sys.exit(1)
     finally:
-        if not args.keep_snapshot and os.path.exists(args.snapshot):
+        if not args.keep_snapshot and not args.no_create_snapshot and os.path.exists(args.snapshot):
             os.unlink(args.snapshot)
             log.info("Deleted snapshot file")
 

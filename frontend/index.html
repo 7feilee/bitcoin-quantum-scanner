@@ -6,8 +6,11 @@
 <title>BTC Quantum Monitor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet"></noscript>
+<link rel="stylesheet" href="style.css?v=20260424d">
 </head>
 <body>
 
@@ -33,6 +36,7 @@
   <button class="nav-tab" data-tab="check">ADDRESS CHECK</button>
   <button class="nav-tab" data-tab="distribution">DISTRIBUTION</button>
   <button class="nav-tab" data-tab="timelocks">TIMELOCKS</button>
+  <button class="nav-tab" data-tab="analytics">ANALYTICS</button>
 </nav>
 
 <!-- ════════════════════════════════════════════════════════════ -->
@@ -142,6 +146,8 @@
     </div>
 
     <div id="addr-result" class="addr-result hidden"></div>
+
+    <div id="addr-history" class="panel" style="display:none"></div>
 
     <!-- Risk tier cards -->
     <div class="tier-grid" id="tier-grid">
@@ -257,12 +263,112 @@ OP_ENDIF
 </div><!-- /tab-timelocks -->
 
 
+<!-- ════════════════════════════════════════════════════════════ -->
+<!--  TAB 5 — ANALYTICS                                          -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<div id="tab-analytics" class="tab-panel hidden">
+
+  <div class="panel-label top-label">── ADVANCED ANALYTICS ──────────────────────────────────────────────</div>
+
+  <!-- Row 1: Dormancy -->
+  <div class="panel">
+    <div class="panel-label">── VULNERABLE UTXO AGE BY HALVING EPOCH ────────────────────────────</div>
+    <div class="stat-row" id="an-dormancy-row" style="flex-wrap:wrap"></div>
+  </div>
+
+  <!-- Row 2: Satoshi era + Entity tags -->
+  <div class="two-col">
+    <div class="panel">
+      <div class="panel-label">── SATOSHI-ERA P2PK BREAKDOWN (blocks 0 – 100k) ────────────────────</div>
+      <canvas id="an-satoshi-canvas" width="420" height="160"></canvas>
+      <div id="an-satoshi-meta" style="margin-top:8px"></div>
+    </div>
+    <div class="panel panel-alert">
+      <div class="panel-label">── KNOWN ENTITY HOLDINGS ───────────────────────────────────────────</div>
+      <div id="an-entities"></div>
+    </div>
+  </div>
+
+  <!-- Row 3: P2TR growth sparkline -->
+  <div class="panel">
+    <div class="panel-label">── P2TR TAPROOT EXPOSURE TREND ─────────────────────────────────────</div>
+    <canvas id="an-p2tr-canvas" width="900" height="100"></canvas>
+    <div id="an-p2tr-meta" class="spark-meta"></div>
+  </div>
+
+  <!-- Row 4: Wallet tier distribution -->
+  <div class="panel">
+    <div class="panel-label">── QUANTUM-VULNERABLE WALLET DISTRIBUTION BY BTC HELD ──────────────</div>
+    <div id="an-wallet-tiers"></div>
+  </div>
+
+  <!-- Row 5: Top-100 richest vulnerable addresses -->
+  <div class="panel">
+    <div class="panel-label">── TOP 100 RICHEST QUANTUM-VULNERABLE ADDRESSES ────────────────────</div>
+    <div style="max-height:420px;overflow-y:auto">
+      <table class="data-table">
+        <thead style="position:sticky;top:0;background:var(--surface)">
+          <tr><th>#</th><th>ADDRESS</th><th>TYPE</th><th class="num">UTXOs</th><th class="num">BTC HELD</th><th class="num">SHARE</th></tr>
+        </thead>
+        <tbody id="an-conc-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Row 6: Lightning estimate + P2SH resolution -->
+  <div class="two-col">
+    <div class="panel">
+      <div class="panel-label">── LIGHTNING CHANNEL ESTIMATE ───────────────────────────────────────</div>
+      <div id="an-lightning"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-label">── P2SH / P2WSH SCRIPT RESOLUTION ─────────────────────────────────</div>
+      <div id="an-p2sh"></div>
+    </div>
+  </div>
+
+  <!-- ── ALL WALLETS DIVIDER ──────────────────────────────────────────── -->
+  <div style="margin:32px 0 16px;border-top:1px solid var(--border);padding-top:24px">
+    <div class="panel-label top-label" style="font-size:11px;letter-spacing:.14em;color:var(--orange)">
+      ── FULL BITCOIN UTXO SET — ALL WALLETS ─────────────────────────────────────
+    </div>
+    <div style="color:var(--muted);font-size:10px;margin-top:6px">
+      Per-address aggregates across all ~165M UTXOs. Excludes P2PK and bare-multisig
+      (no standard address format; covered in the quantum-vulnerable section above).
+      Populated by <code>scan_allwallets.py</code>.
+    </div>
+  </div>
+
+  <!-- Summary tiles -->
+  <div class="stat-row" id="aw-summary-row"></div>
+
+  <!-- Tier distribution -->
+  <div class="panel">
+    <div class="panel-label">── ALL-WALLET BTC DISTRIBUTION BY TIER ─────────────────────────────</div>
+    <div id="aw-tiers"></div>
+  </div>
+
+  <!-- Top 100 richest -->
+  <div class="panel">
+    <div class="panel-label">── TOP 100 RICHEST BITCOIN ADDRESSES ───────────────────────────────</div>
+    <div style="max-height:480px;overflow-y:auto">
+      <table class="data-table">
+        <thead style="position:sticky;top:0;background:var(--surface)">
+          <tr><th>#</th><th>ADDRESS</th><th>TYPE</th><th class="num">UTXOs</th><th class="num">BTC</th><th class="num">% SUPPLY</th></tr>
+        </thead>
+        <tbody id="aw-top100-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /tab-analytics -->
+
 <!-- ── Footer ─────────────────────────────────────────────────── -->
 <footer class="footer">
   <span>BTC Quantum Monitor · data updated nightly · <a href="https://github.com" target="_blank">open source</a></span>
   <span id="footer-queries"></span>
 </footer>
 
-<script src="app.js"></script>
+<script src="app.js?v=20260424d"></script>
 </body>
 </html>

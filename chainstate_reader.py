@@ -1,7 +1,15 @@
 """
 Parses Bitcoin Core's UTXO snapshot produced by `bitcoin-cli dumptxoutset`.
 
-File format (Bitcoin Core 22.x – 27.x):
+File format (Bitcoin Core 28+):
+  magic        : 5 bytes   ("utxo\xff")
+  version      : uint16 LE
+  net_magic    : 4 bytes   (e.g. f9beb4d9 for mainnet)
+  block_hash   : 32 bytes  (internal byte order, reversed for display)
+  utxo_count   : uint64 LE
+  per UTXO: (same as legacy)
+
+File format (Bitcoin Core 22.x – 27.x, no magic prefix):
   block_hash   : 32 bytes  (internal byte order, reversed for display)
   utxo_count   : uint64 LE
   per UTXO:
@@ -32,6 +40,21 @@ from typing import Iterator, Tuple
 
 
 # ── varint / amount helpers ───────────────────────────────────────────────────
+
+def _read_compactsize(f) -> int:
+    """Network CompactSize (used for vout in v28+ grouped snapshot format)."""
+    b = f.read(1)
+    if not b:
+        raise EOFError("unexpected end of snapshot")
+    b = b[0]
+    if b < 0xfd:
+        return b
+    if b == 0xfd:
+        return struct.unpack('<H', f.read(2))[0]
+    if b == 0xfe:
+        return struct.unpack('<I', f.read(4))[0]
+    return struct.unpack('<Q', f.read(8))[0]
+
 
 def _read_varint(f) -> int:
     n = 0
@@ -204,37 +227,95 @@ def pubkey_from_p2pk_script(script: bytes, script_type: str) -> str | None:
 
 # ── snapshot iterator ─────────────────────────────────────────────────────────
 
+_SNAPSHOT_MAGIC = b'utxo\xff'
+
+
 def iter_utxo_snapshot(path: str) -> Iterator[dict]:
     """
     Yield dicts with keys:
       txid, vout, height, is_coinbase, value_sat, script, script_type
     where script is raw bytes and txid is the hex display form.
+
+    Supports both formats:
+      - v28+ (magic present): grouped by txid — one txid + output_count,
+        then N × (vout, code, amount, script) records.
+      - legacy (no magic): one record per UTXO — txid + uint32 vout + coin data.
     """
     with open(path, "rb") as f:
-        block_hash = f.read(32)[::-1].hex()
-        utxo_count = struct.unpack("<Q", f.read(8))[0]
+        prefix = f.read(5)
+        if prefix == _SNAPSHOT_MAGIC:
+            version = struct.unpack("<H", f.read(2))[0]
+            f.read(4)  # network magic
+            block_hash = f.read(32)[::-1].hex()
+            utxo_count = struct.unpack("<Q", f.read(8))[0]
 
-        for _ in range(utxo_count):
-            txid_bytes = f.read(32)
-            txid = txid_bytes[::-1].hex()
-            vout = struct.unpack("<I", f.read(4))[0]
-
-            code = _read_varint(f)
-            height = code >> 1
-            is_coinbase = bool(code & 1)
-
-            compressed_amount = _read_varint(f)
-            value_sat = _decompress_amount(compressed_amount)
-
-            script, script_type = _read_script(f)
-
-            yield {
-                "txid": txid,
-                "vout": vout,
-                "height": height,
-                "is_coinbase": is_coinbase,
-                "value_sat": value_sat,
-                "script": script,
-                "script_type": script_type,
-                "block_hash": block_hash,
-            }
+            if version >= 2:
+                # Grouped format: txid → n_outputs → [(vout, code, amount, script)…]
+                # n_outputs and vout use CompactSize; code, amount, script type use CVarInt.
+                yielded = 0
+                while yielded < utxo_count:
+                    txid_raw = f.read(32)
+                    if len(txid_raw) < 32:
+                        break
+                    txid = txid_raw[::-1].hex()
+                    n_outputs = _read_compactsize(f)
+                    for _ in range(n_outputs):
+                        vout = _read_compactsize(f)
+                        code = _read_varint(f)
+                        height = code >> 1
+                        is_coinbase = bool(code & 1)
+                        value_sat = _decompress_amount(_read_varint(f))
+                        script, script_type = _read_script(f)
+                        yield {
+                            "txid": txid,
+                            "vout": vout,
+                            "height": height,
+                            "is_coinbase": is_coinbase,
+                            "value_sat": value_sat,
+                            "script": script,
+                            "script_type": script_type,
+                            "block_hash": block_hash,
+                        }
+                        yielded += 1
+            else:
+                # v1 magic format: still per-UTXO with CVarInt vout
+                for _ in range(utxo_count):
+                    txid = f.read(32)[::-1].hex()
+                    vout = _read_varint(f)
+                    code = _read_varint(f)
+                    height = code >> 1
+                    is_coinbase = bool(code & 1)
+                    value_sat = _decompress_amount(_read_varint(f))
+                    script, script_type = _read_script(f)
+                    yield {
+                        "txid": txid,
+                        "vout": vout,
+                        "height": height,
+                        "is_coinbase": is_coinbase,
+                        "value_sat": value_sat,
+                        "script": script,
+                        "script_type": script_type,
+                        "block_hash": block_hash,
+                    }
+        else:
+            # Legacy format (v22–v27): per-UTXO with uint32 vout
+            block_hash = (prefix + f.read(27))[::-1].hex()
+            utxo_count = struct.unpack("<Q", f.read(8))[0]
+            for _ in range(utxo_count):
+                txid = f.read(32)[::-1].hex()
+                vout = struct.unpack("<I", f.read(4))[0]
+                code = _read_varint(f)
+                height = code >> 1
+                is_coinbase = bool(code & 1)
+                value_sat = _decompress_amount(_read_varint(f))
+                script, script_type = _read_script(f)
+                yield {
+                    "txid": txid,
+                    "vout": vout,
+                    "height": height,
+                    "is_coinbase": is_coinbase,
+                    "value_sat": value_sat,
+                    "script": script,
+                    "script_type": script_type,
+                    "block_hash": block_hash,
+                }
